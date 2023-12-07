@@ -45,8 +45,28 @@ cursor.execute('''
 
 conn.commit()
 
+def display_receipt(start_address, destination_address, duration, cost):
+    receipt_window = tk.Toplevel(dashboard_window)
+    receipt_window.title("Ride Receipt")
+    receipt_window.geometry("300x300")
 
+    # Display receipt information
+    receipt_label = tk.Label(receipt_window, text="Ride Receipt", font=("Helvetica", 16, "bold"))
+    receipt_label.pack(pady=10)
 
+    start_label = tk.Label(receipt_window, text=f"Start Address: {start_address}")
+    start_label.pack()
+
+    destination_label = tk.Label(receipt_window, text=f"Destination Address: {destination_address}")
+    destination_label.pack()
+
+    duration_label = tk.Label(receipt_window, text=f"Duration: {duration} minutes")
+    duration_label.pack()
+
+    cost_label = tk.Label(receipt_window, text=f"Cost: £{cost}")
+    cost_label.pack()
+    
+    
 def destroy_dashboard():
     dashboard_window.destroy()
     root.deiconify()  # Unhide the main window when the dashboard is closed
@@ -84,11 +104,11 @@ def submit_ride_request(entries):
         messagebox.showerror("Request Failed", "Please fill in all fields")
         return
 
-    # Insert the ride request into the bookings table
+    # Insert the ride request into the bookings table with the current user's ID
     user_id = get_current_user_id()
     cursor.execute('''
-    INSERT INTO bookings (user_id, start_address, destination_address, postcode, date, time, paid, status)
-    VALUES (?, ?, ?, ?, ?, ?, 'Pending', 'Not assigned')
+        INSERT INTO bookings (user_id, start_address, destination_address, postcode, date, time, paid, status)
+        VALUES (?, ?, ?, ?, ?, ?, 'Pending', 'Not assigned')
     ''', (user_id, start_address, destination_address, postcode, date, time))
     conn.commit()
 
@@ -98,17 +118,33 @@ def submit_ride_request(entries):
     # Update the table in the dashboard with the latest ride requests
     update_ride_requests_table()
 
+def check_user_is_driver(user_id):
+    # You need to implement the logic to determine if the user with the given ID is a driver
+    # For example, you might have a 'user_type' column in the database
+    cursor.execute('SELECT user_type FROM users WHERE id=?', (user_id,))
+    user_type = cursor.fetchone()[0] if cursor.rowcount > 0 else None
+
+    return user_type == "Driver" if user_type else False
+
 def update_ride_requests_table():
     # Clear existing items in the treeview
     for item in tree.get_children():
         tree.delete(item)
 
-    # Retrieve and display unassigned ride requests from the database
-    cursor.execute('SELECT id, start_address, destination_address, postcode, date, time, paid, status FROM bookings WHERE driver_id IS NULL AND status="Not assigned"')
-    unassigned_bookings = cursor.fetchall()
+    # Retrieve and display bookings based on user type and user ID
+    user_id = get_current_user_id()
+    is_driver = check_user_is_driver(user_id)
 
-    for booking in unassigned_bookings:
+    if is_driver:
+        cursor.execute('SELECT id, start_address, destination_address, postcode, date, time, paid, status FROM bookings')
+    else:
+        cursor.execute('SELECT id, start_address, destination_address, postcode, date, time, paid, status FROM bookings WHERE user_id=?', (user_id,))
+
+    bookings = cursor.fetchall()
+
+    for booking in bookings:
         tree.insert("", "end", values=(booking[0], booking[1], booking[2], booking[3], booking[4], booking[5], booking[6], booking[7]))
+
 
 def assign_driver_to_booking(booking_id, driver_id):
     cursor.execute('UPDATE bookings SET driver_id=? WHERE id=?', (driver_id, booking_id))
@@ -129,6 +165,7 @@ def update_dashboard(user_id, is_driver=False):
 
     for booking in bookings:
         tree.insert("", "end", values=(booking[0], booking[1], booking[2], booking[3], booking[4], booking[5], booking[6], booking[7]))
+
 
 def get_current_user_id():
     # Assuming the user is logged in, get the ID of the currently logged-in user
@@ -271,9 +308,132 @@ def login():
             # Update the table in the dashboard with the latest ride requests
             update_ride_requests_table()#
             update_dashboard(get_current_user_id(), is_driver=True)
+            
+        elif user_type == "Admin":
+            # Create a new window for the dashboard
+            dashboard_window = tk.Toplevel(root)
+            dashboard_window.title("Admins Dashboard")
+            dashboard_window.geometry("1700x500")  # Larger size
+
+            # Display a welcome message with the user's first name
+            welcome_label_text = f"Welcome, {user[2]}!"  # Assuming user's first name is at index 2
+            welcome_label = tk.Label(dashboard_window, text=welcome_label_text)
+            welcome_label.pack(pady=20)
+
+            # Button to open the take ride window
+            btn_request_ride = tk.Button(dashboard_window, text="User management", command=user_management, state=tk.NORMAL)
+            btn_request_ride.pack(side=tk.TOP, pady=10)
+
+            # Cancel Booking button
+            btn_cancel_booking = tk.Button(dashboard_window, text="Booking management", command=booking_management, state=tk.DISABLED)
+            btn_cancel_booking.pack(side=tk.TOP, padx=5, pady=10)
+
+            # Change Booking button
+            btn_change_booking = tk.Button(dashboard_window, text="Reports and Analytics", command=reports_analytics, state=tk.DISABLED)
+            btn_change_booking.pack(side=tk.TOP, padx=5, pady=10)
+
+            # Treeview for displaying ride requests (right side)
+            tree = ttk.Treeview(dashboard_window, columns=("ID", "Start Address", "Destination Address", "Postcode", "Date", "Time", "Paid", "Status"), show="headings")
+
+            # Center all values
+            headings = ["ID", "Start Address", "Destination Address", "Postcode", "Date", "Time", "Paid", "Status"]
+            for heading in headings:
+                tree.heading(heading, text=heading, anchor=tk.CENTER)
+            
+            columns = ["ID", "Start Address", "Destination Address", "Postcode", "Date", "Time", "Paid", "Status"]
+            for column in columns:
+                tree.column(column, anchor=tk.CENTER)
+
+            tree.heading("ID", text="ID", anchor=tk.CENTER)
+            tree.heading("Start Address", text="Start Address", anchor=tk.CENTER)
+            tree.heading("Destination Address", text="Destination Address", anchor=tk.CENTER)
+            tree.heading("Postcode", text="Postcode", anchor=tk.CENTER)
+            tree.heading("Date", text="Date", anchor=tk.CENTER)
+            tree.heading("Time", text="Time", anchor=tk.CENTER)
+            tree.heading("Paid", text="Paid", anchor=tk.CENTER)
+            tree.heading("Status", text="Status", anchor=tk.CENTER)
+            tree.pack(side=tk.TOP, fill=tk.BOTH, expand=1)
+
+            # Set up an event handler for selecting a booking in the treeview
+            tree.bind("<ButtonRelease-1>", on_tree_select)
+
+            # Set up an event handler for closing the dashboard
+            dashboard_window.protocol("WM_DELETE_WINDOW", destroy_dashboard)
+
+            # Hide the main login window
+            root.withdraw()
+
+            # Update the table in the dashboard with the latest ride requests
+            update_ride_requests_table()#
+            update_dashboard(get_current_user_id(), is_driver=True)
+        
+                
+            
     else:
         messagebox.showerror("Login Failed", "Invalid email, password, or user type")
+def user_management():
+    global user_tree
+    # Create a new window for user management
+    user_management_window = tk.Toplevel(dashboard_window)
+    user_management_window.title("User Management")
 
+    # Create a treeview to display user details
+    user_tree = ttk.Treeview(user_management_window, columns=("ID", "Name", "Email", "User Type"), show="headings")
+
+    # Set column headings
+    headings = ["ID", "Name", "Email", "User Type"]
+    for heading in headings:
+        user_tree.heading(heading, text=heading, anchor=tk.CENTER)
+        user_tree.column(heading, width=100, anchor=tk.CENTER)
+
+    # Populate the tree with user data (replace this with your data retrieval logic)
+    populate_user_tree(user_tree)
+
+    # Add a "Suspend User" button
+    suspend_button = ttk.Button(user_management_window, text="Suspend User", command=suspend_user)
+    suspend_button.pack(pady=10)
+
+    # Pack the treeview
+    user_tree.pack(expand=True, fill="both")
+
+# Function to populate the user tree with dummy data
+def populate_user_tree(tree):
+    # Replace this with your data retrieval logic
+    cursor.execute('SELECT id, first_name || " " || last_name AS name, email, user_type FROM users')
+    users = cursor.fetchall()
+
+    for user in users:
+        tree.insert("", "end", values=user)
+        
+user_tree = None
+
+
+# Function to suspend the selected user
+
+def suspend_user():
+    global user_tree  # Declare user_tree as a global variable
+    # Get the selected item from the treeview
+    selected_item = user_tree.selection()
+
+    if selected_item:
+        # Get user ID from the selected item
+        user_id = user_tree.item(selected_item)["values"][0]
+
+        # Call your suspend user function here, passing the user_id
+        # Example: suspend_user_function(user_id)
+
+        # Delete the user from the SQLite database
+        cursor.execute('DELETE FROM users WHERE id=?', (user_id,))
+        conn.commit()
+
+        # Remove the selected item from the treeview
+        user_tree.delete(selected_item)
+        tk.messagebox.showinfo("Info", "User suspended")
+    else:
+        # Show an information message if no user is selected
+        tk.messagebox.showinfo("Info", "Please select a user to suspend.")
+
+        
 def take_ride():
     # Get the first name of the driver
     driver_first_name = get_current_user_first_name()
@@ -283,17 +443,28 @@ def take_ride():
     if selected_item:
         booking_id = tree.item(selected_item)["values"][0]
 
-        # Update the status of the selected booking to "Assigned by [Driver's First Name]"
-        assigned_status = f"Assigned by {driver_first_name}"
-        cursor.execute("UPDATE bookings SET status=? WHERE id=?", (assigned_status, booking_id))
-        conn.commit()
+        # Check the status of the selected booking
+        cursor.execute('SELECT status FROM bookings WHERE id=?', (booking_id,))
+        status = cursor.fetchone()[0]
 
-        # Refresh the driver dashboard
-        update_dashboard(get_current_user_id(), is_driver=True)
+        # Only proceed if the status is not "Cancelled" or "Completed"
+        if status not in ["Cancelled", "Completed"]:
+            # Update the status of the selected booking to "Assigned by [Driver's First Name]"
+            assigned_status = f"Assigned by {driver_first_name}"
+            cursor.execute("UPDATE bookings SET status=? WHERE id=?", (assigned_status, booking_id))
+            conn.commit()
 
-        messagebox.showinfo("Info", "Ride assigned successfully.")
+            # Refresh the driver dashboard
+            update_dashboard(get_current_user_id(), is_driver=True)
+
+            messagebox.showinfo("Info", "Ride assigned successfully.")
+        else:
+            messagebox.showinfo("Error", "This booking is no longer available for assignment.")
     else:
         messagebox.showerror("Error", "Please select a booking to assign.")
+        
+    update_dashboard(get_current_user_id(), is_driver=True)
+
 
 def on_tree_select(event):
     selected_item = tree.selection()
@@ -337,10 +508,6 @@ def cancel_booking():
             # Update the status of the selected booking to "Cancelled"
             cursor.execute('UPDATE bookings SET status="Cancelled" WHERE id=?', (booking_id,))
             conn.commit()
-
-            # Disable all buttons after changing the status to "Cancelled"
-            btn_cancel_booking["state"] = tk.DISABLED
-            btn_change_booking["state"] = tk.DISABLED
 
             # Display a success message
             messagebox.showinfo("Booking Cancelled", "Booking cancelled successfully!")
@@ -418,6 +585,7 @@ def submit_changes_to_booking(entries, booking_id):
 
     # Close the Change Booking window
     destroy_change_booking_window()
+    update_dashboard(get_current_user_id())
 
 # Function to destroy the Change Booking window
 def destroy_change_booking_window():
@@ -463,11 +631,20 @@ def end_ride():
     if selected_item:
         # Get the ID of the selected booking
         booking_id = tree.item(selected_item)["values"][0]
+        cursor.execute('SELECT start_address, destination_address FROM bookings WHERE id=?', (booking_id,))
+        booking_details = cursor.fetchone()
+        
+        if booking_details:
+            start_address, destination_address = booking_details
 
+            # Calculate random duration and cost
+            duration = random.randint(8, 20)
+            cost = round(random.uniform(15, 30), 2)
+            
         # Check the status of the selected booking
         cursor.execute('SELECT status FROM bookings WHERE id=?', (booking_id,))
         status = cursor.fetchone()[0]
-
+        
         # Only proceed if the status is not "Cancelled" or "Completed"
         if status not in ["Cancelled", "Completed"]:
             # Update the status of the selected booking to "Completed"
@@ -477,6 +654,7 @@ def end_ride():
             # Display a success message
             messagebox.showinfo("Ride Completed", "Ride completed successfully!")
 
+            display_receipt(start_address, destination_address, duration, cost)
             # Update the driver dashboard table with the latest ride requests
             update_dashboard(get_current_user_id(), is_driver=True)
         else:
@@ -696,3 +874,4 @@ btn_signup = tk.Button(root, text="Signup", command=open_signup_window)
 btn_signup.pack(pady=10)
 
 root.mainloop()
+
