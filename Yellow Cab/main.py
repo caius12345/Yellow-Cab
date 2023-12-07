@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 import sqlite3
 from tkcalendar import Calendar
+import random 
 
 # Create SQLite database and tables
 conn = sqlite3.connect('user_database.db')
@@ -26,16 +27,22 @@ cursor.execute('''
     CREATE TABLE IF NOT EXISTS bookings (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
+        driver_id INTEGER,
         start_address TEXT,
         destination_address TEXT,
         postcode TEXT,
         date TEXT,
         time TEXT,
-        paid TEXT DEFAULT 'Pending',
-        status TEXT DEFAULT 'Not assigned',
-        FOREIGN KEY (user_id) REFERENCES users(id)
+        paid TEXT,
+        status TEXT,
+        FOREIGN KEY (user_id) REFERENCES users (id),
+        FOREIGN KEY (driver_id) REFERENCES drivers (id)
     )
 ''')
+
+
+
+
 conn.commit()
 
 
@@ -96,13 +103,16 @@ def update_ride_requests_table():
     for item in tree.get_children():
         tree.delete(item)
 
-    # Retrieve and display ride requests from the database
-    user_id = get_current_user_id()
-    cursor.execute('SELECT id, start_address, destination_address, postcode, date, time, paid, status FROM bookings WHERE user_id=?', (user_id,))
-    bookings = cursor.fetchall()
+    # Retrieve and display unassigned ride requests from the database
+    cursor.execute('SELECT id, start_address, destination_address, postcode, date, time, paid, status FROM bookings WHERE driver_id IS NULL AND status="Not assigned"')
+    unassigned_bookings = cursor.fetchall()
 
-    for booking in bookings:
+    for booking in unassigned_bookings:
         tree.insert("", "end", values=(booking[0], booking[1], booking[2], booking[3], booking[4], booking[5], booking[6], booking[7]))
+
+def assign_driver_to_booking(booking_id, driver_id):
+    cursor.execute('UPDATE bookings SET driver_id=? WHERE id=?', (driver_id, booking_id))
+    conn.commit()
 
 def update_dashboard(user_id, is_driver=False):
     # Clear existing items in the treeview
@@ -215,8 +225,8 @@ def login():
             welcome_label = tk.Label(dashboard_window, text=welcome_label_text)
             welcome_label.pack(pady=20)
 
-            # Button to open the request ride window
-            btn_request_ride = tk.Button(dashboard_window, text="Take Ride", command=open_request_ride_window, state=tk.DISABLED)
+            # Button to open the take ride window
+            btn_request_ride = tk.Button(dashboard_window, text="Take Ride", command=take_ride, state=tk.DISABLED)
             btn_request_ride.pack(side=tk.TOP, pady=10)
 
             # Cancel Booking button
@@ -224,7 +234,7 @@ def login():
             btn_cancel_booking.pack(side=tk.TOP, padx=5, pady=10)
 
             # Change Booking button
-            btn_change_booking = tk.Button(dashboard_window, text="End Ride", command=change_booking, state=tk.DISABLED)
+            btn_change_booking = tk.Button(dashboard_window, text="End Ride", command=end_ride, state=tk.DISABLED)
             btn_change_booking.pack(side=tk.TOP, padx=5, pady=10)
 
             # Treeview for displaying ride requests (right side)
@@ -264,14 +274,53 @@ def login():
     else:
         messagebox.showerror("Login Failed", "Invalid email, password, or user type")
 
+def take_ride():
+    # Get the first name of the driver
+    driver_first_name = get_current_user_first_name()
 
+    # Retrieve the selected booking ID
+    selected_item = tree.selection()
+    if selected_item:
+        booking_id = tree.item(selected_item)["values"][0]
+
+        # Update the status of the selected booking to "Assigned by [Driver's First Name]"
+        assigned_status = f"Assigned by {driver_first_name}"
+        cursor.execute("UPDATE bookings SET status=? WHERE id=?", (assigned_status, booking_id))
+        conn.commit()
+
+        # Refresh the driver dashboard
+        update_dashboard(get_current_user_id(), is_driver=True)
+
+        messagebox.showinfo("Info", "Ride assigned successfully.")
+    else:
+        messagebox.showerror("Error", "Please select a booking to assign.")
 
 def on_tree_select(event):
     selected_item = tree.selection()
     if selected_item:
-        # Enable the Cancel Booking and Change Booking buttons when a booking is selected
-        btn_cancel_booking["state"] = tk.NORMAL
-        btn_change_booking["state"] = tk.NORMAL
+        # Get the ID and status of the selected booking
+        booking_id, status = tree.item(selected_item)["values"][:2]
+
+        # Enable or disable buttons based on the status
+        if status == "Cancelled":
+            # If the status is "Cancelled," disable all buttons
+            btn_cancel_booking["state"] = tk.DISABLED
+            btn_change_booking["state"] = tk.DISABLED
+            btn_request_ride["state"] = tk.DISABLED
+        else:
+            # Enable the Cancel Booking and Change Booking buttons when a booking is selected
+            btn_cancel_booking["state"] = tk.NORMAL
+            btn_change_booking["state"] = tk.NORMAL
+
+            # Enable the "Take Ride" button for the driver dashboard
+            btn_request_ride["state"] = tk.NORMAL
+    else:
+        # Disable the Cancel Booking, Change Booking, and "Take Ride" buttons when no booking is selected
+        btn_cancel_booking["state"] = tk.DISABLED
+        btn_change_booking["state"] = tk.DISABLED
+        btn_request_ride["state"] = tk.DISABLED  # Set to tk.NORMAL to enable "Take Ride" button
+
+
 
 def cancel_booking():
     selected_item = tree.selection()
@@ -279,63 +328,90 @@ def cancel_booking():
         # Get the ID of the selected booking
         booking_id = tree.item(selected_item)["values"][0]
 
-        # Delete the selected booking from the database
-        cursor.execute('DELETE FROM bookings WHERE id=?', (booking_id,))
-        conn.commit()
+        # Check the status of the selected booking
+        cursor.execute('SELECT status FROM bookings WHERE id=?', (booking_id,))
+        status = cursor.fetchone()[0]
 
-        # Display a success message
-        messagebox.showinfo("Booking Canceled", "Booking canceled successfully!")
+        # Only proceed if the status is not "Cancelled" or "Completed"
+        if status not in ["Cancelled", "Completed"]:
+            # Update the status of the selected booking to "Cancelled"
+            cursor.execute('UPDATE bookings SET status="Cancelled" WHERE id=?', (booking_id,))
+            conn.commit()
 
-        # Update the table in the dashboard with the latest ride requests
-        update_ride_requests_table()
+            # Disable all buttons after changing the status to "Cancelled"
+            btn_cancel_booking["state"] = tk.DISABLED
+            btn_change_booking["state"] = tk.DISABLED
+
+            # Display a success message
+            messagebox.showinfo("Booking Cancelled", "Booking cancelled successfully!")
+
+            # Update the table in the dashboard with the latest ride requests
+            update_ride_requests_table()
+        else:
+            # Display an error message if the status is "Cancelled" or "Completed"
+            messagebox.showerror("Error", "Cannot cancel a booking with status 'Cancelled' or 'Completed'.")
+    else:
+        messagebox.showerror("Error", "Please select a booking to cancel.")
+
+
+
 
 change_booking_window = None
 
 def change_booking():
-    global change_booking_window  # Declare as a global variable
     selected_item = tree.selection()
     if selected_item:
         # Get the ID of the selected booking
         booking_id = tree.item(selected_item)["values"][0]
 
-        # Retrieve details of the selected booking using the ID
-        cursor.execute('SELECT * FROM bookings WHERE id=?', (booking_id,))
-        booking_details = cursor.fetchone()
+        # Check the status of the selected booking
+        cursor.execute('SELECT status FROM bookings WHERE id=?', (booking_id,))
+        status = cursor.fetchone()[0]
 
-        if booking_details:
-            # Extract details from the tuple (assuming column order)
-            start_address, destination_address, postcode, date, time = booking_details[2:7]
+        # Only proceed if the status is not "Cancelled" or "Completed"
+        if status not in ["Cancelled", "Completed"]:
+            # Retrieve details of the selected booking using the ID
+            cursor.execute('SELECT * FROM bookings WHERE id=?', (booking_id,))
+            booking_details = cursor.fetchone()
 
-            # Create a new window for changing the booking details
-            change_booking_window = tk.Toplevel(dashboard_window)
-            change_booking_window.title("Change Booking")
+            if booking_details:
+                # Extract details from the tuple (assuming column order)
+                start_address, destination_address, postcode, date, time = booking_details[2:7]
 
-            # Labels and entry widgets for changing booking details
-            labels = ["Start Address:", "Destination Address:", "Postcode:", "Date (MM/DD/YY):", "Time:"]
-            entries = []
+                # Create a new window for changing the booking details
+                change_booking_window = tk.Toplevel(dashboard_window)
+                change_booking_window.title("Change Booking")
 
-            for i, label_text in enumerate(labels):
-                label = tk.Label(change_booking_window, text=label_text)
-                label.grid(row=i, column=0, padx=5, pady=5)
+                # Labels and entry widgets for changing booking details
+                labels = ["Start Address:", "Destination Address:", "Postcode:", "Date (MM/DD/YY):", "Time:"]
+                entries = []
 
-                entry = tk.Entry(change_booking_window)
-                entry.grid(row=i, column=1, padx=5, pady=5)
-                entries.append(entry)
+                for i, label_text in enumerate(labels):
+                    label = tk.Label(change_booking_window, text=label_text)
+                    label.grid(row=i, column=0, padx=5, pady=5)
 
-            # Pre-fill the entry fields with existing booking details
-            entries[0].insert(0, start_address)
-            entries[1].insert(0, destination_address)
-            entries[2].insert(0, postcode)
-            entries[3].insert(0, date)
-            entries[4].insert(0, time)
+                    entry = tk.Entry(change_booking_window)
+                    entry.grid(row=i, column=1, padx=5, pady=5)
+                    entries.append(entry)
 
-            # Button to submit changes to the booking
-            btn_submit_changes = tk.Button(change_booking_window, text="Submit Changes", command=lambda: submit_changes_to_booking(entries, booking_id))
-            btn_submit_changes.grid(row=len(labels), column=0, columnspan=2, pady=10)
+                # Pre-fill the entry fields with existing booking details
+                entries[0].insert(0, start_address)
+                entries[1].insert(0, destination_address)
+                entries[2].insert(0, postcode)
+                entries[3].insert(0, date)
+                entries[4].insert(0, time)
+
+                # Button to submit changes to the booking
+                btn_submit_changes = tk.Button(change_booking_window, text="Submit Changes", command=lambda: submit_changes_to_booking(entries, booking_id))
+                btn_submit_changes.grid(row=len(labels), column=0, columnspan=2, pady=10)
+            else:
+                messagebox.showerror("Error", "Failed to retrieve booking details.")
         else:
-            messagebox.showerror("Error", "Failed to retrieve booking details.")
+            # Display an error message if the status is "Cancelled" or "Completed"
+            messagebox.showerror("Error", "Cannot change a booking with status 'Cancelled' or 'Completed'.")
     else:
         messagebox.showerror("Error", "Please select a booking to change.")
+
 
 def submit_changes_to_booking(entries, booking_id):
     # ... (Previous code)
@@ -350,36 +426,37 @@ def destroy_change_booking_window():
         change_booking_window.destroy()
 
 
+def get_current_user_first_name():
+    # Assuming the user is logged in, get the first name of the currently logged-in user (driver)
+    email = entry_email_login.get()
+    password = entry_password_login.get()
+    user_type = var_user_type_login.get()
 
+    cursor.execute('SELECT first_name FROM users WHERE email=? AND password=? AND user_type=?', (email, password, user_type))
+    user = cursor.fetchone()
 
-def take_ride(booking_id):
-    # Update the status of the selected booking to "Assigned" in the database
-    cursor.execute("UPDATE bookings SET status=? WHERE id=?", ("Assigned", booking_id))
-    conn.commit()
+    return user[0] if user else None
 
-    # Refresh the driver dashboard
-    update_driver_dashboard()
+def display_receipt(start_address, destination_address, duration, cost):
+    receipt_window = tk.Toplevel(dashboard_window)
+    receipt_window.title("Ride Receipt")
+    receipt_window.geometry("300x300")
 
-    messagebox.showinfo("Info", "Ride assigned successfully.")
+    # Display receipt information
+    receipt_label = tk.Label(receipt_window, text="Ride Receipt", font=("Helvetica", 16, "bold"))
+    receipt_label.pack(pady=10)
 
+    start_label = tk.Label(receipt_window, text=f"Start Address: {start_address}")
+    start_label.pack()
 
+    destination_label = tk.Label(receipt_window, text=f"Destination Address: {destination_address}")
+    destination_label.pack()
 
+    duration_label = tk.Label(receipt_window, text=f"Duration: {duration} minutes")
+    duration_label.pack()
 
-def assign_ride():
-    selected_item = tree.selection()
-    if selected_item:
-        # Get the ID of the selected booking
-        booking_id = tree.item(selected_item)["values"][0]
-
-        # Update the status of the selected booking to "Assigned" in green
-        cursor.execute('UPDATE bookings SET status="Assigned" WHERE id=?', (booking_id,))
-        conn.commit()
-
-        # Display a success message
-        messagebox.showinfo("Ride Assigned", "Ride assigned successfully!")
-
-        # Update the driver dashboard with the latest ride requests
-        update_driver_dashboard()
+    cost_label = tk.Label(receipt_window, text=f"Cost: £{cost}")
+    cost_label.pack()
 
 def end_ride():
     selected_item = tree.selection()
@@ -387,16 +464,28 @@ def end_ride():
         # Get the ID of the selected booking
         booking_id = tree.item(selected_item)["values"][0]
 
-        # Update the status of the selected booking to "Completed"
-        cursor.execute('UPDATE bookings SET status="Completed" WHERE id=?', (booking_id,))
-        conn.commit()
+        # Check the status of the selected booking
+        cursor.execute('SELECT status FROM bookings WHERE id=?', (booking_id,))
+        status = cursor.fetchone()[0]
 
-        # Display a success message
-        messagebox.showinfo("Ride Completed", "Ride completed successfully!")
+        # Only proceed if the status is not "Cancelled" or "Completed"
+        if status not in ["Cancelled", "Completed"]:
+            # Update the status of the selected booking to "Completed"
+            cursor.execute('UPDATE bookings SET status="Completed" WHERE id=?', (booking_id,))
+            conn.commit()
 
-        # Update the driver dashboard table with the latest ride requests
-        update_driver_dashboard()
+            # Display a success message
+            messagebox.showinfo("Ride Completed", "Ride completed successfully!")
 
+            # Update the driver dashboard table with the latest ride requests
+            update_dashboard(get_current_user_id(), is_driver=True)
+        else:
+            # Display an error message if the status is "Cancelled" or "Completed"
+            messagebox.showerror("Error", "Cannot end ride for a booking with status 'Cancelled' or 'Completed'.")
+    else:
+        messagebox.showerror("Error", "Please select a booking to end the ride.")
+
+    
 
 
 def submit_changes_to_booking(entries, booking_id):
@@ -445,6 +534,7 @@ def open_signup_window():
     dropdown_user_type_signup.grid(row=0, column=1, padx=5, pady=5)
 
     btn_continue_signup = tk.Button(signup_window, text="Continue", command=lambda: show_signup_fields(signup_window, var_user_type_signup.get()))
+
     btn_continue_signup.grid(row=1, column=0, columnspan=2, pady=10)
 
 def show_signup_fields(signup_window, user_type):
@@ -539,29 +629,31 @@ def show_signup_fields(signup_window, user_type):
                                                                                        entry_employee_code.get() if user_type == "Admin" else None))
     btn_signup.grid(row=8 if user_type == "Customer" else 9, column=0, columnspan=2, pady=10)
 
-# Function to handle final signup
 def signup(user_type, title, first_name, last_name, phone_number, email, password, card_number, plate_number=None, employee_code=None):
-    # Check if any field is empty
-    if any(not entry for entry in [title, first_name, last_name, phone_number, email, password, card_number]):
-        messagebox.showerror("Signup Failed", "Please fill in all fields")
-        return
-
-    # Check if another account for the same user type already exists
-    cursor.execute('SELECT * FROM users WHERE user_type=?', (user_type,))
+    # Check if the email or phone number already exists in the database
+    cursor.execute('SELECT id FROM users WHERE email=? OR phone_number=?', (email, phone_number))
     existing_user = cursor.fetchone()
+
     if existing_user:
-        messagebox.showerror("Signup Failed", f"Another account for {user_type} already exists")
+        messagebox.showerror("Signup Failed", "An account with this email or phone number already exists.")
         return
 
-    if user_type == "Admin" and (not employee_code or employee_code != "0000"):
+    # If user_type is Admin and the employee code is not valid
+    if user_type == "Admin" and employee_code != "0000":
         messagebox.showerror("Signup Failed", "Invalid employee code")
         return
 
+    # Insert the new user into the database
     cursor.execute('INSERT INTO users (title, first_name, last_name, phone_number, email, password, card_number, plate_number, employee_code, user_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                    (title, first_name, last_name, phone_number, email, password, card_number, plate_number, employee_code, user_type))
     conn.commit()
 
     messagebox.showinfo("Signup Successful", "Account created successfully!")
+
+
+
+
+
 
 # GUI setup
 root = tk.Tk()
