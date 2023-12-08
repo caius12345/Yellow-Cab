@@ -150,6 +150,18 @@ def assign_driver_to_booking(booking_id, driver_id):
     cursor.execute('UPDATE bookings SET driver_id=? WHERE id=?', (driver_id, booking_id))
     conn.commit()
 
+def update_drivers_table():
+    # Clear existing items in the treeview
+    for item in driver_tree.get_children():
+        driver_tree.delete(item)
+
+    # Retrieve and display all available drivers
+    cursor.execute('SELECT id, first_name, last_name, employee_code FROM users WHERE user_type="Driver"')
+    drivers = cursor.fetchall()
+
+    for driver in drivers:
+        driver_tree.insert("", "end", values=(driver[0], driver[1], driver[2], driver[3]))
+
 def update_dashboard(user_id, is_driver=False):
     # Clear existing items in the treeview
     for item in tree.get_children():
@@ -325,11 +337,11 @@ def login():
             btn_request_ride.pack(side=tk.TOP, pady=10)
 
             # Cancel Booking button
-            btn_cancel_booking = tk.Button(dashboard_window, text="Booking management", command=booking_management, state=tk.DISABLED)
+            btn_cancel_booking = tk.Button(dashboard_window, text="Booking management", command=booking_management, state=tk.NORMAL)
             btn_cancel_booking.pack(side=tk.TOP, padx=5, pady=10)
 
             # Change Booking button
-            btn_change_booking = tk.Button(dashboard_window, text="Reports and Analytics", command=reports_analytics, state=tk.DISABLED)
+            btn_change_booking = tk.Button(dashboard_window, text="Reports and Analytics", command=reports_analytics, state=tk.NORMAL)
             btn_change_booking.pack(side=tk.TOP, padx=5, pady=10)
 
             # Treeview for displaying ride requests (right side)
@@ -406,8 +418,36 @@ def populate_user_tree(tree):
         tree.insert("", "end", values=user)
         
 user_tree = None
+driver_tree = None
 
 
+
+def assign_driver():
+    global driver_tree
+    # Implement the logic to assign the selected driver to the booking
+    selected_booking_item = booking_tree.selection()
+    selected_driver_item = driver_tree.selection()
+
+    if selected_booking_item and selected_driver_item:
+        # Get booking ID and driver ID from the selected items
+        booking_id = booking_tree.item(selected_booking_item)["values"][0]
+        driver_id = driver_tree.item(selected_driver_item)["values"][0]
+
+        # Call your assign driver function here, passing the booking_id and driver_id
+        # Example: assign_driver_function(booking_id, driver_id)
+
+        # Update the booking in the SQLite database with the assigned driver
+        cursor.execute('UPDATE bookings SET driver_id=? WHERE id=?', (driver_id, booking_id))
+        conn.commit()
+
+        # Remove the assigned booking from the bookings treeview
+        booking_tree.delete(selected_booking_item)
+
+        # Close the assign driver window
+        assign_driver_window.destroy()
+    else:
+        # Show an information message if no booking or driver is selected
+        tk.messagebox.showinfo("Info", "Please select both a booking and a driver to assign.")
 # Function to suspend the selected user
 
 def suspend_user():
@@ -519,9 +559,54 @@ def cancel_booking():
             messagebox.showerror("Error", "Cannot cancel a booking with status 'Cancelled' or 'Completed'.")
     else:
         messagebox.showerror("Error", "Please select a booking to cancel.")
+        
+def booking_management():
+    # Create a new window for booking management
+    booking_management_window = tk.Toplevel(dashboard_window)
+    booking_management_window.title("Booking Management")
+
+    # Treeview for displaying bookings
+    global booking_tree
+    booking_tree = ttk.Treeview(booking_management_window, columns=("ID", "Start Address", "Destination Address", "Postcode", "Date", "Time", "Paid", "Status"), show="headings")
+
+    # Center all values
+    headings = ["ID", "Start Address", "Destination Address", "Postcode", "Date", "Time", "Paid", "Status"]
+    for heading in headings:
+        booking_tree.heading(heading, text=heading, anchor=tk.CENTER)
+
+    columns = ["ID", "Start Address", "Destination Address", "Postcode", "Date", "Time", "Paid", "Status"]
+    for column in columns:
+        booking_tree.column(column, anchor=tk.CENTER)
+
+    booking_tree.pack(side=tk.TOP, fill=tk.BOTH, expand=1)
+
+    # Retrieve and display unassigned bookings from the database
+    cursor.execute('SELECT id, start_address, destination_address, postcode, date, time, paid, status FROM bookings WHERE status="Not assigned"')
+    bookings = cursor.fetchall()
+
+    for booking in bookings:
+        booking_tree.insert("", "end", values=(booking[0], booking[1], booking[2], booking[3], booking[4], booking[5], booking[6], booking[7]))
 
 
 
+
+def on_booking_select(event):
+    # Enable buttons when a booking is selected
+    global btn_cancel_booking, btn_assign_driver
+    btn_cancel_booking.config(state=tk.NORMAL)
+    btn_assign_driver.config(state=tk.NORMAL)
+    
+def update_bookings_table():
+    # Clear existing items in the treeview
+    for item in booking_tree.get_children():
+        booking_tree.delete(item)
+
+    # Retrieve and display all bookings
+    cursor.execute('SELECT id, user_id, driver_id, start_address, destination_address, date, time, paid, status FROM bookings')
+    bookings = cursor.fetchall()
+
+    for booking in bookings:
+        booking_tree.insert("", "end", values=(booking[0], booking[1], booking[2], booking[3], booking[4], booking[5], booking[6], booking[7], booking[8]))
 
 change_booking_window = None
 
